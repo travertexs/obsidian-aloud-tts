@@ -930,7 +930,7 @@ const HumeTTSInstructionsComponent: React.FC<{
 }> = observer(({ store }) => {
   const onChange: React.ChangeEventHandler<HTMLTextAreaElement> =
     React.useCallback((evt) => {
-      store.updateModelSpecificSettings("openai", {
+      store.updateModelSpecificSettings("hume", {
         hume_ttsInstructions: evt.target.value,
       });
     }, []);

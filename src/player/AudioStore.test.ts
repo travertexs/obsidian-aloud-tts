@@ -3,11 +3,12 @@ import { describe, expect, test, vi, beforeEach, afterEach } from "vitest";
 import { AudioCache, memoryStorage } from "./AudioCache";
 import { AudioSink, TrackStatus } from "./AudioSink";
 import { AudioStore, loadAudioStore } from "./AudioStore";
-import { TTSModel, TTSModelOptions } from "./TTSModel";
+import { BatchTTSModel, TTSModel, TTSModelOptions } from "./TTSModel";
 import { DEFAULT_SETTINGS, TTSPluginSettings } from "./TTSPluginSettings";
 import { ActiveAudioText } from "./ActiveAudioText";
 import { createAudioSystem } from "./AudioSystem";
 import { AudioTextOptions } from "./AudioTextChunk";
+import { ChunkLoader } from "./ChunkLoader";
 
 vi.mock("obsidian", () => ({
   requestUrl: vi.fn(),
@@ -660,6 +661,10 @@ const fakeTTS: TTSModel = async () => {
   return new ArrayBuffer(0);
 };
 
+const fakeTTSBatch: BatchTTSModel = async () => {
+  return [];
+};
+
 const emptyAudioBuffer = {
   length: 0,
   duration: 0,
@@ -758,6 +763,7 @@ function FakeHTMLAudioElement() {
 
 interface MaybeStoreDependencies {
   textToSpeech?: TTSModel;
+  textToSpeechBatch?: BatchTTSModel;
   storage?: AudioCache;
   audioSink?: AudioSink;
   ttsSettings?: TTSPluginSettings;
@@ -766,6 +772,7 @@ function createStore({
   storage = memoryStorage(),
   audioSink = new FakeAudioSink(),
   textToSpeech = fakeTTS,
+  textToSpeechBatch = fakeTTSBatch,
   ttsSettings = DEFAULT_SETTINGS,
 }: MaybeStoreDependencies = {}): AudioStore {
   const system = createAudioSystem({
@@ -781,6 +788,8 @@ function createStore({
         system: sys,
       });
     },
+    chunkLoader: (sys) => (new ChunkLoader({ system: sys })),
+    humeBatchTTSModel: () => textToSpeechBatch,
   });
   return system.audioStore;
 }

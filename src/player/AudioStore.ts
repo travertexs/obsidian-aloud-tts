@@ -65,6 +65,9 @@ class AudioStoreImpl implements AudioStore {
   }
 
   exportAudio(text: string): Promise<ArrayBuffer> {
+    if (!this.system.ttsModel) {
+      return Promise.reject();
+    }
     return this.system.ttsModel(text, toModelOptions(this.system.settings));
   }
 

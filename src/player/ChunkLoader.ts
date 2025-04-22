@@ -1,6 +1,7 @@
 import * as mobx from "mobx";
 import { AudioSystem } from "./AudioSystem";
 import { TTSErrorInfo, TTSModelOptions, toModelOptions } from "./TTSModel";
+import { AudioTextChunk } from "./AudioTextChunk"; // Added import
 
 /** manages loading and caching of tracks */
 export class ChunkLoader {
@@ -9,7 +10,8 @@ export class ChunkLoader {
 
   private system: AudioSystem;
   private backgroundQueue: BackgroundRequest[] = [];
-  private backgroundActiveCount = 0;
+  // Count active *requests* (a batch counts as one active request for simplicity of queue processing trigger)
+  private backgroundRequestsActiveCount = 0;
   private localCache: CachedAudio[] = [];
   private backgroundRequestProcessor: IntervalDaemon;
   private garbageCollector: IntervalDaemon;
@@ -35,25 +37,30 @@ export class ChunkLoader {
   };
 
   /**
-   * When you remove an ArrayBuffer from the audio, it dereferences the ArrayBuffer, rendering it
-   * as a useless pointer that can no longer be used. This method removes the cached audio for that same
-   * text, such that it can be re-loaded from the disk cache.
+   * Removes locally cached audio (e.g., if ArrayBuffer becomes detached).
+   * Does not affect storage cache.
    */
   uncache(text: string): void {
     this.localCache = this.localCache.filter((x) => x.text !== text);
   }
 
   preload(text: string, options: TTSModelOptions, position: number): void {
-    const found = this.backgroundQueue.find(
+    // Check if already queued
+    const alreadyQueued = this.backgroundQueue.some(
       (x) => x.text === text && mobx.comparer.structural(x.options, options),
     );
-    if (found) {
+    if (alreadyQueued) {
       return;
     }
-    const loaded = this.localCache.find(
+
+    // Check if already in local memory cache (loading or loaded)
+    const alreadyLoaded = this.localCache.some(
       (x) => x.text === text && mobx.comparer.structural(x.options, options),
     );
-    if (loaded) {
+    if (alreadyLoaded) {
+      // Update requested time to prevent garbage collection if needed
+      const cached = this.localCache.find(x => x.text === text && mobx.comparer.structural(x.options, options));
+      if (cached) cached.requestedTime = Date.now();
       return;
     }
     this.backgroundQueue.push({
@@ -62,42 +69,93 @@ export class ChunkLoader {
       requestedTime: Date.now(),
       position,
     });
+    // Sort queue by position to prioritize upcoming chunks
+    this.backgroundQueue.sort((a, b) => a.position - b.position);
     this.backgroundRequestProcessor.startIfNot();
   }
 
-  load(text: string, options: TTSModelOptions): Promise<ArrayBuffer> {
+  /**
+   * Requests audio for a given text and options.
+   * Returns a promise that resolves with the ArrayBuffer.
+   * Handles local caching and triggers background loading if necessary.
+   */
+  async load(text: string, options: TTSModelOptions): Promise<ArrayBuffer> {
     const existing = this.localCache.find(
       (x) =>
         x.text === text &&
-        JSON.stringify(x.options) === JSON.stringify(options),
+        mobx.comparer.structural(x.options, options) // Use structural comparison
     );
+
     if (existing) {
-      existing.requestedTime = Date.now();
-      return existing.result;
-    } else {
-      const audio = this.createCachedAudio(text, options);
-      this.localCache.push(audio);
-      return audio.result;
+      existing.requestedTime = Date.now(); // Update timestamp
+      return existing.result; // Return existing promise (might be pending or resolved)
     }
+
+    // 2. Check storage cache (before creating local entry/queueing)
+    // Use options passed to `load` for cache lookup key consistency
+    const stored: ArrayBuffer | null = await this.system.storage.getAudio(
+      text,
+      options,
+    );
+    if (stored) {
+       // If found in storage, create a resolved entry in local cache
+      // console.log(`Cache hit (storage): ${text.substring(0, 20)}...`);
+       const audio = this.createCachedAudio(text, options);
+       audio.resolve(stored); // Immediately resolve
+       this.localCache.push(audio);
+       return audio.result;
+    }
+
+
+    // 3. Not in local or storage cache - create local entry and queue for loading
+    // console.log(`Cache miss: ${text.substring(0,20)}...`);
+    const audio = this.createCachedAudio(text, options);
+    this.localCache.push(audio);
+
+    // Ensure it's added to the background queue if not already there
+    // (preload might have already added it)
+    const position = 
+      this.system.audioStore?.activeText?.audio.chunks.findIndex((c: AudioTextChunk) => c.text === text) ?? Infinity;
+    this.preload(text, options, position); // preload handles queueing logic
+
+    return audio.result; // Return the pending promise
   }
 
   destroy(): void {
     this.backgroundRequestProcessor.stop();
     this.garbageCollector.stop();
+    // Clear caches and queue on destroy
+    this.localCache = [];
+    this.backgroundQueue = [];
+    this.backgroundRequestsActiveCount = 0;
   }
 
   private createCachedAudio(
     text: string,
     options: TTSModelOptions,
   ): CachedAudio {
-    const audio = {
+    let resolve!: (value: ArrayBuffer | PromiseLike<ArrayBuffer>) => void;
+    let reject!: (reason?: any) => void;
+
+    const promise = new Promise<ArrayBuffer>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+
+    // Wrap reject to automatically remove from cache on failure
+    const rejectAndClean = (reason?: any) => {
+      this.destroyCachedAudio(audio); // Remove from local cache on failure
+      reject(reason);
+    };
+
+
+    const audio: CachedAudio = {
       text,
       options,
       requestedTime: Date.now(),
-      result: this.tryLoadTrack(text, options, 0, 3).catch((e) => {
-        this.destroyCachedAudio(audio);
-        throw e;
-      }),
+      result: promise,
+      resolve: resolve, // Store the original resolve
+      reject: rejectAndClean, // Store the wrapped reject
     };
     return audio;
   }
@@ -109,81 +167,171 @@ export class ChunkLoader {
     }
   }
 
-  // combined with the IntervalDaemon, this has the behavior of adding a request
-  // ever interval, up until it saturates at the MAX_BACKGROUND_REQUESTS
+
+  // Processes the queue, deciding whether to batch (Hume) or send individually
   private processBackgroundQueue(): boolean {
-    if (this.backgroundActiveCount >= this.MAX_BACKGROUND_REQUESTS) {
-      return true;
-    } else if (this.backgroundQueue.length === 0) {
-      return false;
-    } else {
-      const item = this.backgroundQueue.shift()!;
-      this.backgroundActiveCount += 1;
-      this.load(item.text, item.options).finally(() => {
-        this.backgroundActiveCount -= 1;
-        this.processBackgroundQueue();
-      });
+    if (this.backgroundRequestsActiveCount >= this.MAX_BACKGROUND_REQUESTS) {
+      // console.log("Queue: Max active requests reached.");
       return true;
     }
+    if (this.backgroundQueue.length === 0) {
+      // console.log("Queue: Empty.");
+      return false; // Stop timer if queue is empty
+    }
+
+    const isHume = this.system.settings.modelProvider === 'hume';
+
+    if (isHume && this.system.humeBatchTTSModel) {
+      // --- Hume Batch Processing ---
+      // Determine batch size (up to remaining slots, max queue length)
+      const availableSlots = this.MAX_BACKGROUND_REQUESTS - this.backgroundRequestsActiveCount;
+      const batchSize = Math.min(this.backgroundQueue.length, availableSlots, 5); // Hume might have utterance limits, adjust '5' if needed
+
+      if (batchSize === 0) return true; // Should not happen based on checks, but safety
+
+      const batchItems = this.backgroundQueue.splice(0, batchSize); // Take items from front
+      const texts = batchItems.map(item => item.text);
+      // Use options from the *first* item for the batch API call (Hume continuation assumption)
+      // Regenerate options based on *current* settings for the API call itself
+      const currentOptions = toModelOptions(this.system.settings);
+      // Ensure the specific voice/instructions from the *first* queued item are used if they differ from current defaults
+      const batchApiOptions: TTSModelOptions = {
+        ...currentOptions, // Start with current settings
+        voice: batchItems[0].options.voice || currentOptions.voice,
+        instructions: batchItems[0].options.instructions || currentOptions.instructions,
+        // Keep other options like speed from current settings unless needed otherwise
+      };
+
+
+      // console.log(`Queue: Starting Hume batch request for ${batchItems.length} items.`);
+      this.backgroundRequestsActiveCount += 1; // Increment active *requests* count by 1 for the batch
+
+      this.tryLoadBatchTrack(texts, batchApiOptions, batchItems, 0, 3)
+        .then(async (results) => {
+          // console.log(`Queue: Hume batch success (${batchItems.length} items).`);
+          if (results.length !== batchItems.length) {
+            throw new Error(`Hume batch returned ${results.length} results for ${batchItems.length} texts.`);
+          }
+          for (let i = 0; i < batchItems.length; i++) {
+            const item = batchItems[i];
+            const resultBuffer = results[i];
+            const cached = this.findCachedAudio(item.text, item.options);
+            if (cached) {
+              cached.resolve(resultBuffer);
+              try {
+                // Cache in storage using the *original* options key from the item
+                await this.system.storage.saveAudio(item.text, item.options, resultBuffer);
+              } catch (saveError) {
+                console.error("Error saving batch item to storage:", saveError);
+                // Don't reject the main promise, just log the save error
+              }
+            } else {
+              console.warn("Could not find local cache entry to resolve for batch item:", item.text.substring(0,20));
+            }
+          }
+        })
+        .catch((error) => {
+          console.error(`Queue: Hume batch failed:`, error);
+          // Reject promises for all items in the failed batch
+          for (const item of batchItems) {
+            const cached = this.findCachedAudio(item.text, item.options);
+            if (cached) {
+              cached.reject(error); // Reject pending promise (triggers cleanup)
+            }
+          }
+        })
+        .finally(() => {
+          // console.log(`Queue: Hume batch finished.`);
+          this.backgroundRequestsActiveCount -= 1; // Decrement active requests count
+          this.processBackgroundQueue(); // Immediately check if more work can be done
+        });
+
+    } else {
+      // --- OpenAI / Compatible / Non-Batch Processing ---
+      const item = this.backgroundQueue.shift()!; // Take one item
+      // console.log(`Queue: Starting single request for: ${item.text.substring(0,20)}...`);
+      this.backgroundRequestsActiveCount += 1; // Increment active requests count
+
+      // We re-fetch from cache here just in case it arrived via storage check between queueing and processing
+      // The `load` function handles this check internally now. We call `load` again, but it should hit
+      // the pending promise in localCache and not trigger a new API call if already initiated.
+      // If the promise associated with the cache entry resolves/rejects, it handles storage saving/cleanup.
+      this.load(item.text, item.options)
+        .then(() => {
+          // console.log(`Queue: Single request success: ${item.text.substring(0,20)}...`);
+          // Resolution handled by the promise mechanism in `load` and `createCachedAudio`
+        })
+        .catch((error) => {
+          console.error(`Queue: Single request failed: ${item.text.substring(0,20)}...`, error);
+          // Rejection handled by the promise mechanism
+        })
+        .finally(() => {
+          // console.log(`Queue: Single request finished: ${item.text.substring(0,20)}...`);
+          this.backgroundRequestsActiveCount -= 1;
+          this.processBackgroundQueue(); // Check for more work
+        });
+    }
+
+    return true; // Keep processor running if queue might still have items or requests are active
   }
 
   private processGarbage(): boolean {
     this.localCache = this.localCache.filter(
-      (req) => Date.now() - req.requestedTime < this.MAX_LOCAL_TTL_MILLIS,
+      (entry) => Date.now() - entry.requestedTime < this.MAX_LOCAL_TTL_MILLIS,
     );
     return true;
   }
 
-  private async tryLoadTrack(
-    track: string,
-    options: TTSModelOptions,
-    attempt: number = 0,
-    maxAttempts: number = 3,
-  ): Promise<ArrayBuffer> {
-    try {
-      return await this.loadTrack(track, options);
-    } catch (ex) {
-      const errorInfo = ex instanceof TTSErrorInfo ? ex : undefined;
-      const canRetry =
-        attempt < maxAttempts && (errorInfo ? errorInfo.isRetryable : true);
-      if (!canRetry) {
-        throw ex;
-      } else {
-        await new Promise((resolve) =>
-          setTimeout(resolve, 250 * Math.pow(2, attempt)),
-        );
-        return await this.tryLoadTrack(
-          track,
-          options,
-          attempt + 1,
-          maxAttempts,
-        );
-      }
-    }
+  // Finds a specific entry in the local cache
+  private findCachedAudio(text: string, options: TTSModelOptions): CachedAudio | undefined {
+     return this.localCache.find(
+          (x) =>
+            x.text === text &&
+            mobx.comparer.structural(x.options, options)
+      );
   }
 
-  /** non-stateful function (barring layers of caching and API calls) */
-  private async loadTrack(
-    text: string,
-    options: TTSModelOptions,
-  ): Promise<ArrayBuffer> {
-    // Use the passed 'options' ONLY for the cache lookup key
-    const stored: ArrayBuffer | null = await this.system.storage.getAudio(
-      text,
-      options,
-    );
-    if (stored) {
-      return stored;
-    } else {
-      // Regenerate options from CURRENT settings before making the API call
-      const currentOptions = toModelOptions(this.system.settings);
-      const buff = await this.system.ttsModel(text, currentOptions);
-      await this.system.storage.saveAudio(text, options, buff);
-      return buff;
+  // --- Batch Loading Retry Logic ---
+  private async tryLoadBatchTrack(
+      texts: string[],
+      options: TTSModelOptions,
+      originalItems: BackgroundRequest[], // Keep original items for context if needed
+      attempt: number,
+      maxAttempts: number,
+  ): Promise<ArrayBuffer[]> {
+    try {
+        if (!this.system.humeBatchTTSModel) {
+           throw new Error("Hume batch model not available in AudioSystem");
+        }
+        // **Decision:** Skip storage check for batch simplicity for now.
+        // Could add checks here later:
+        // 1. Check storage for each text.
+        // 2. Build list of texts still needing API call.
+        // 3. Make API call only for missing texts.
+        // 4. Reconstruct full results array using storage hits + API results.
+
+        // Make the API call using CURRENT options derived for the batch
+        return await this.system.humeBatchTTSModel(texts, options);
+
+    } catch (ex) {
+      console.warn(`Batch load attempt ${attempt + 1} failed for ${texts.length} items.`, ex);
+      const errorInfo = ex instanceof TTSErrorInfo ? ex : undefined;
+      const canRetry = attempt < maxAttempts && (errorInfo ? errorInfo.isRetryable : !(ex instanceof Error && ex.message.includes("Unexpected Hume API response format"))); // Don't retry fatal format errors
+
+      if (!canRetry) {
+        console.error(`Batch load failed permanently after ${attempt + 1} attempts.`);
+        throw ex; // Propagate error after max retries or for non-retryable errors
+      } else {
+        const delay = 250 * Math.pow(2, attempt);
+        console.log(`Retrying batch load in ${delay}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        return this.tryLoadBatchTrack(texts, options, originalItems, attempt + 1, maxAttempts);
+      }
     }
   }
 }
 
+// --- Helper Interfaces and Functions ---
 interface IntervalDaemon {
   stop: () => IntervalDaemon;
   startIfNot: () => IntervalDaemon;
@@ -215,17 +363,19 @@ export function IntervalDaemon(
       try {
         shouldContinue = doWork();
       } catch (ex) {
-        // ignore it, will retry
+         // Decide whether to stop or continue based on error? For now, assume continue.
+         shouldContinue = true;
       }
       if (shouldContinue) {
         timer = setInterval(() => {
-          let shouldContinue = true;
+          let shouldContinueInterval = true;
           try {
-            shouldContinue = doWork();
+            shouldContinueInterval = doWork();
           } catch (ex) {
-            // ignore it, will retry
+             // Decide whether to stop or continue based on error? For now, assume continue.
+             shouldContinueInterval = true;
           }
-          if (!shouldContinue) {
+          if (!shouldContinueInterval) {
             processor.stop();
           }
         }, opts.interval);
@@ -254,6 +404,10 @@ interface CachedAudio {
   readonly options: TTSModelOptions;
   /** the final result of the request across retries */
   readonly result: Promise<ArrayBuffer>;
-  /** the time the request was made. Milliseconds since Unix Epoch. May be updated to prevent deletion */
+  /** Function to resolve the result promise */
+  resolve: (value: ArrayBuffer | PromiseLike<ArrayBuffer>) => void;
+   /** Function to reject the result promise */
+  reject: (reason?: any) => void;
+  /** the time the request was made/last accessed. Milliseconds since Unix Epoch. Updated to prevent GC. */
   requestedTime: number;
 }
