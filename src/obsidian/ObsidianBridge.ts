@@ -12,7 +12,7 @@ import * as React from "react";
 import { createRoot } from "react-dom/client";
 import { IsPlaying } from "../components/IsPlaying";
 import { AudioStore } from "../player/AudioStore";
-import { hashString } from "../util/Minhash";
+import { hashStrings } from "../util/Minhash";
 import { TTSPluginSettingsStore } from "../player/TTSPluginSettings";
 
 export interface ObsidianBridge {
@@ -96,7 +96,7 @@ export class ObsidianBridgeImpl implements ObsidianBridge {
         new Notice("No text to export");
         return;
       }
-      const hash = hashString(text).toString(16);
+      const hash = hashStrings([text])[0].toString(16);
       const prefix = text
         .replace(/\s/g, "-")
         .replace(/[^a-zA-Z0-9_-]/g, "")
@@ -269,17 +269,15 @@ export class ObsidianBridgeImpl implements ObsidianBridge {
     const selection = editor.getRange(from, to);
     if (selection) {
       try {
-        player
-          .startPlayer({
-            text: selection,
-            filename:
-              [file?.path, file?.name].filter((x) => x).join("/") || "Untitled",
-            start,
-            end: start + selection.length,
-          })
-          .catch((ex) => {
-            console.error("Couldn't start player!", ex);
-          });
+        player.startPlayer({
+          text: selection,
+          filename:
+            [file?.path, file?.name].filter((x) => x).join("/") || "Untitled",
+          start,
+          end: start + selection.length,
+        }).catch((ex) => {
+          console.error("Couldn't start player!", ex);
+        });
       } catch (ex) {
         console.error("Couldn't start player!", ex);
       }

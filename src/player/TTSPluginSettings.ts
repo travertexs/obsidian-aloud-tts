@@ -1,14 +1,17 @@
 import { action, observable } from "mobx";
-import { TTSErrorInfo, TTSModelOptions, listModels } from "./TTSModel";
+import { TTSErrorInfo, TTSModelOptions, listOpenAIModels } from "./TTSModel";
 import { debounce } from "../util/misc";
-import { hashString } from "../util/Minhash";
+import { hashStrings } from "../util/Minhash";
 export type TTSPluginSettings = {
-  OPENAI_API_KEY: string;
-  OPENAI_API_URL: string;
+  API_KEY: string;
+  API_URL: string;
   modelProvider: ModelProvider;
   model: string;
-  ttsVoice: string;
+  ttsVoice?: string;
+  sourceType: string;
   instructions?: string;
+  contextMode: boolean;
+  batchMode: "reload_uncached_only" | "reload_from_first_uncached" | "reload_all" | "off";
   chunkType: "sentence" | "paragraph";
   playbackSpeed: number;
   cacheType: "local" | "vault";
@@ -16,21 +19,33 @@ export type TTSPluginSettings = {
   showPlayerView: PlayerViewMode;
   version: number;
   audioFolder: string;
-} & OpenAIModelConfig &
-  OpenAICompatibleModelConfig;
+} & OpenAIModelConfig & OpenAICompatModelConfig & HumeModelConfig;
 
 export interface OpenAIModelConfig {
   openai_apiKey: string;
   openai_ttsModel: string;
   openai_ttsVoice: string;
   openai_ttsInstructions?: string;
+  openai_contextMode: boolean;
+  openai_batchMode: "off";
 }
 
-export interface OpenAICompatibleModelConfig {
+export interface OpenAICompatModelConfig {
   openaicompat_apiKey: string;
   openaicompat_apiBase: string;
   openaicompat_ttsModel: string;
   openaicompat_ttsVoice: string;
+  openaicompat_contextMode: boolean;
+  openaicompat_batchMode: "off";
+}
+
+export interface HumeModelConfig {
+  hume_apiKey: string;
+  hume_ttsVoice?: string;
+  hume_sourceType: string;
+  hume_ttsInstructions?: string;
+  hume_contextMode: boolean;
+  hume_batchMode: TTSPluginSettings["batchMode"];
 }
 
 export const playViewModes = [
@@ -47,26 +62,27 @@ export function isPlayerViewMode(value: unknown): value is PlayerViewMode {
 }
 
 export function voiceHash(options: TTSModelOptions): string {
-  return hashString(
-    options.apiUri +
-      options.model +
-      options.voice +
-      (options.instructions || ""),
-  ).toString();
+  return hashStrings(
+    [options.apiUri + (options.model || "") + options.voice + (options.instructions || "")],
+  )[0].toString();
 }
 
 export const REAL_OPENAI_API_URL = "https://api.openai.com";
+export const REAL_HUME_API_URL = "API_URL";
 
-export const modelProviders = ["openai", "openaicompat"] as const;
+export const modelProviders = ["openai", "openaicompat", "hume"] as const;
 export type ModelProvider = (typeof modelProviders)[number];
 
 export const DEFAULT_SETTINGS: TTSPluginSettings = {
-  OPENAI_API_KEY: "",
-  OPENAI_API_URL: "",
+  API_KEY: "",
+  API_URL: "",
   modelProvider: "openai",
   model: "gpt-4o-mini-tts",
   ttsVoice: "shimmer",
+  sourceType: "",
   instructions: undefined,
+  contextMode: false,
+  batchMode: "off",
   chunkType: "sentence",
   playbackSpeed: 1.0,
   cacheDurationMillis: 1000 * 60 * 60 * 24 * 7, // 7 days
@@ -77,11 +93,23 @@ export const DEFAULT_SETTINGS: TTSPluginSettings = {
   openai_ttsModel: "gpt-4o-mini-tts",
   openai_ttsVoice: "shimmer",
   openai_ttsInstructions: undefined,
+  openai_contextMode: false,
+  openai_batchMode: "off",
   // openaicompat
   openaicompat_apiKey: "",
   openaicompat_apiBase: "",
   openaicompat_ttsModel: "",
   openaicompat_ttsVoice: "",
+  openaicompat_contextMode: false,
+  openaicompat_batchMode: "off",
+  // hume
+  hume_apiKey: "",
+  hume_ttsVoice: undefined,
+  hume_sourceType: "HUME_AI",
+  hume_ttsInstructions: undefined,
+  hume_contextMode: false,
+  hume_batchMode: "off",
+
   version: 1,
   audioFolder: "aloud",
 } as const;
@@ -117,49 +145,51 @@ export async function pluginSettingsStore(
       },
       checkApiKey: debounce(async () => {
         if (
-          store.settings.OPENAI_API_URL &&
-          store.settings.OPENAI_API_URL !== REAL_OPENAI_API_URL
+          store.settings.API_URL &&
+          store.settings.API_URL !== REAL_OPENAI_API_URL &&
+          store.settings.API_URL !== REAL_HUME_API_URL
         ) {
           store.setApiKeyValidity(true);
-        } else {
-          if (!store.settings.OPENAI_API_KEY) {
-            store.setApiKeyValidity(
-              false,
-              `Please enter an API key in the "${MARKETING_NAME_LONG}" plugin settings`,
-            );
-          } else {
-            store.setApiKeyValidity(undefined, undefined);
-            try {
-              await listModels(store.settings);
-              store.setApiKeyValidity(true, undefined);
-            } catch (ex: unknown) {
-              console.error("Could not validate API key", ex);
-              let message = "Cannot connect to OpenAI";
-              if (ex instanceof TTSErrorInfo) {
-                if (ex.openAIErrorCode() === "invalid_api_key") {
-                  message =
-                    "Invalid API key! Enter a valid API key in the plugin settings";
-                } else {
-                  const msg = ex.openAIJsonMessage();
-                  if (msg) {
-                    message = msg;
-                  }
+        } else if (!store.settings.API_KEY) {
+          store.setApiKeyValidity(
+            false,
+            `Please enter an API key in the "${MARKETING_NAME_LONG}" plugin settings`,
+          );
+        } else if (store.settings.modelProvider !== "hume") {
+          store.setApiKeyValidity(undefined, undefined);
+
+          try {
+            await listOpenAIModels(store.settings);
+            store.setApiKeyValidity(true, undefined);
+          } catch (ex: unknown) {
+            console.error("Could not validate API key", ex);
+            let message = "Cannot connect to OpenAI";
+            if (ex instanceof TTSErrorInfo) {
+              if (ex.ttsErrorCode() === "invalid_api_key") {
+                message =
+                  "Invalid API key! Enter a valid API key in the plugin settings";
+              } else {
+                const msg = ex.ttsJsonMessage();
+                if (msg) {
+                  message = msg;
                 }
               }
-              store.setApiKeyValidity(false, message);
             }
+            store.setApiKeyValidity(false, message);
           }
+        } else {
+          store.setApiKeyValidity(true);
         }
       }, 500),
       updateSettings: async (
         update: Partial<TTSPluginSettings>,
       ): Promise<void> => {
-        const keyBefore = store.settings.OPENAI_API_KEY;
-        const apiBefore = store.settings.OPENAI_API_URL;
+        const keyBefore = store.settings.API_KEY;
+        const apiBefore = store.settings.API_URL;
         Object.assign(store.settings, update);
         if (
-          keyBefore !== store.settings.OPENAI_API_KEY ||
-          apiBefore !== store.settings.OPENAI_API_URL
+          keyBefore !== store.settings.API_KEY ||
+          apiBefore !== store.settings.API_URL
         ) {
           await store.checkApiKey();
         }
@@ -176,19 +206,35 @@ export async function pluginSettingsStore(
         const additionalSettings: Partial<TTSPluginSettings> =
           provider === "openai"
             ? {
-                OPENAI_API_KEY: merged.openai_apiKey,
-                OPENAI_API_URL: "",
-                ttsVoice: merged.openai_ttsVoice,
-                instructions: merged.openai_ttsInstructions || undefined,
-                model: merged.openai_ttsModel,
-              }
-            : {
-                OPENAI_API_KEY: merged.openaicompat_apiKey,
-                OPENAI_API_URL: merged.openaicompat_apiBase,
-                ttsVoice: merged.openaicompat_ttsVoice,
-                instructions: undefined,
-                model: merged.openaicompat_ttsModel,
-              };
+              API_KEY: merged.openai_apiKey,
+              API_URL: REAL_OPENAI_API_URL,
+              ttsVoice: merged.openai_ttsVoice,
+              instructions: merged.openai_ttsInstructions || undefined,
+              model: merged.openai_ttsModel,
+              contextMode: merged.openai_contextMode,
+              batchMode: merged.openai_batchMode,
+            }
+            : provider === "openaicompat"
+            ? {
+              API_KEY: merged.openaicompat_apiKey,
+              API_URL: merged.openaicompat_apiBase,
+              ttsVoice: merged.openaicompat_ttsVoice,
+              instructions: undefined,
+              model: merged.openaicompat_ttsModel,
+              contextMode: merged.openaicompat_contextMode,
+              batchMode: merged.openaicompat_batchMode,
+            }
+            : provider === "hume"
+            ? {
+              API_KEY: merged.hume_apiKey,
+              API_URL: REAL_HUME_API_URL,
+              ttsVoice: merged.hume_ttsVoice || undefined,
+              sourceType: merged.hume_sourceType,
+              instructions: merged.hume_ttsInstructions || undefined,
+              contextMode: merged.hume_contextMode,
+              hume_batchMode: merged.hume_batchMode,
+            }
+            : {};
         await store.updateSettings({
           ...settings,
           ...additionalSettings,
@@ -231,24 +277,49 @@ const parsePluginSettings = (toParse: unknown): TTSPluginSettings => {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function migrateToVersion1(data: any): any {
-  // extract the openai_apiKey and openai_apiBase fields
+  const isHume = data.API_URL === REAL_HUME_API_URL;
   const isCustom =
-    !!data.OPENAI_API_URL && data.OPENAI_API_URL !== REAL_OPENAI_API_URL;
+    !!data.API_URL &&
+    data.API_URL !== REAL_OPENAI_API_URL &&
+    !isHume;
+
+  let providerSettings = {};
+  let modelProvider: ModelProvider = "openai";
+
+  if (isCustom) {
+    modelProvider = "openaicompat";
+    providerSettings = {
+      openaicompat_apiKey: data.API_KEY,
+      openaicompat_apiBase: data.API_URL,
+      openaicompat_ttsModel: data.model,
+      openaicompat_ttsVoice: data.ttsVoice,
+      openaicompat_contextMode: data.contextMode,
+      openaicompat_batchMode: data.batchMode,
+    };
+  } else if (isHume) {
+    modelProvider = "hume";
+    providerSettings = {
+      hume_apiKey: data.API_KEY,
+      hume_ttsVoice: data.ttsVoice,
+      hume_sourceType: data.sourceType,
+      hume_contextMode: data.contextMode,
+      hume_batchMode: data.batchMode,
+    };
+  } else {
+    modelProvider = "openai";
+    providerSettings = {
+      openai_apiKey: data.API_KEY,
+      openai_ttsModel: data.model,
+      openai_ttsVoice: data.ttsVoice,
+      openai_contextMode: data.contextMode,
+      openai_batchMode: data.batchMode,
+    };
+  }
+
   return {
     ...data,
-    modelProvider: isCustom ? "openaicompat" : "openai",
-    ...(isCustom
-      ? {
-          openaicompat_apiKey: data.OPENAI_API_KEY,
-          openaicompat_apiBase: data.OPENAI_API_URL,
-          openaicompat_ttsModel: data.model,
-          openaicompat_ttsVoice: data.ttsVoice,
-        }
-      : {
-          openai_apiKey: data.OPENAI_API_KEY,
-          openai_ttsModel: data.model,
-          openai_ttsVoice: data.ttsVoice,
-        }),
+    modelProvider: modelProvider,
+    ...providerSettings,
     version: 1,
   };
 }

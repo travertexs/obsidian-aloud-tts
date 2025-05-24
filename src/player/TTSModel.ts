@@ -1,4 +1,9 @@
-import { REAL_OPENAI_API_URL, TTSPluginSettings } from "./TTSPluginSettings";
+import {
+  REAL_HUME_API_URL,
+  REAL_OPENAI_API_URL,
+  TTSPluginSettings,
+} from "./TTSPluginSettings";
+import { base64ToArrayBuffer } from "../util/misc";
 
 /**
  * options used by the audio model. Some options are used as a cache key, such that changes to the options
@@ -6,8 +11,10 @@ import { REAL_OPENAI_API_URL, TTSPluginSettings } from "./TTSPluginSettings";
  */
 export interface TTSModelOptions {
   model: string;
-  voice: string;
+  voice?: string;
+  sourceType: string;
   instructions?: string;
+  contextMode: boolean;
   apiUri: string;
   apiKey: string;
 }
@@ -36,10 +43,10 @@ export class TTSErrorInfo extends Error {
     return this.httpErrorCode === 429 || this.httpErrorCode >= 500;
   }
 
-  openAIJsonMessage(): string | undefined {
+  ttsJsonMessage(): string | undefined {
     return (this.errorDetails as ErrorMessage)?.error?.message;
   }
-  openAIErrorCode(): string | undefined {
+  ttsErrorCode(): string | undefined {
     return (this.errorDetails as ErrorMessage)?.error?.code;
   }
 }
@@ -49,56 +56,154 @@ export function toModelOptions(
 ): TTSModelOptions {
   return {
     model: pluginSettings.model,
-    voice: pluginSettings.ttsVoice,
+    voice: pluginSettings.ttsVoice || undefined,
+    sourceType: pluginSettings.sourceType,
     instructions: pluginSettings.instructions || undefined,
-    apiUri: pluginSettings.OPENAI_API_URL || REAL_OPENAI_API_URL,
-    apiKey: pluginSettings.OPENAI_API_KEY,
+    contextMode: pluginSettings.contextMode,
+    apiUri: pluginSettings.API_URL || (
+      pluginSettings.modelProvider === 'hume' ?
+      REAL_HUME_API_URL :
+      REAL_OPENAI_API_URL
+    ),
+    apiKey: pluginSettings.API_KEY,
   };
 }
 
+// Interface for batch text-to-speech requests
 export interface TTSModel {
-  (text: string, options: TTSModelOptions): Promise<ArrayBuffer>;
+  (texts: string[], options: TTSModelOptions, contexts?: string[]): Promise<ArrayBuffer[]>;
 }
 
-export const openAITextToSpeech: TTSModel = async function openAITextToSpeech(
-  text: string,
+export const humeTextToSpeech: TTSModel = async function humeTextToSpeech(
+  texts: string[],
   options: TTSModelOptions,
-): Promise<ArrayBuffer> {
-  const headers = await fetch(
-    orDefaultOpenAI(options.apiUri) + "/v1/audio/speech",
-    {
-      headers: {
-        Authorization: "Bearer " + options.apiKey,
-        "Content-Type": "application/json",
-      },
-      method: "POST",
-      body: JSON.stringify({
-        model: options.model,
-        voice: options.voice,
-        instructions: options.instructions,
-        input: text,
-        speed: 1,
-      }),
+  contexts?: string[],
+): Promise<ArrayBuffer[]> {
+  // Construct the utterances array for the Hume API request
+  const utterances = texts.map((text, index) => {
+    const utterance: {
+      text: string;
+      voice?: { id: string; provider: string };
+      description?: string;
+      speed?: number;
+    } = {
+      text: text,
+    };
+
+    // Only include voice, description and speed for the first utterance for continuation
+    if (index === 0) {
+      if (options.voice) {
+        utterance.voice = {
+          id: options.voice,
+          provider: options.sourceType.toUpperCase(),
+        };
+      }
+      if (options.instructions) {
+        utterance.description = options.instructions;
+      }
+      utterance.speed = 1.0;
+    }
+    return utterance;
+  });
+
+  let contextUtterances: { text: string }[] | undefined;
+  if (contexts) {
+   contextUtterances = contexts.map((text) => {
+      return {
+        text: text,
+      };
+    });
+  }
+
+  const headers = await fetch(orDefaultHume(options.apiUri) + "/v0/tts", {
+    headers: {
+      "X-Hume-Api-Key": options.apiKey,
+      "Content-Type": "application/json",
     },
-  );
+    method: "POST",
+    body: JSON.stringify({
+      ...(contexts && contexts.length > 0 && options.contextMode && {
+        context: { utterances: contextUtterances }
+      }),
+      utterances: utterances,
+      format: { type: "mp3" },
+      num_generations: 1,
+      split_utterances: false,
+    }),
+  });
+  await validate200(headers);
+  const res = await headers.json();
+
+  // Hume might return multiple generations, we only care about the first one.
+  const generation = res.generations[0];
+  if (!generation || !generation.snippets) {
+    console.error("Hume response missing generations or snippets:", res);
+    throw new Error("Hume response missing generations or snippets");
+  }
+
+    if (generation.snippets.length !== texts.length) {
+      throw new Error(
+        `Mismatch between input texts (${texts.length}) and received snippets (${generation.snippets.length})`,
+      );
+    }
+    
+    const audioBuffers: ArrayBuffer[] = [];
+    for (let i = 0; i < texts.length; i++) {
+      const snippets = generation.snippets[i];
+      const snippet = snippets[0];
+      audioBuffers.push(base64ToArrayBuffer(snippet.audio));
+    }
+
+    return audioBuffers;
+};
+
+// OpenAI / Compatible API implementation
+export const openAITextToSpeech: TTSModel = async function openAITextToSpeech(
+  texts: string[],
+  options: TTSModelOptions,
+  contexts?: string[],
+): Promise<ArrayBuffer[]> {
+  const headers = await fetch(orDefaultOpenAI(options.apiUri) + "/v1/audio/speech", {
+    headers: {
+      Authorization: "Bearer " + options.apiKey,
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+    body: JSON.stringify({
+      model: options.model,
+      voice: (options.voice ? options.voice : ""),
+      ...(options.instructions && {
+        instructions: options.instructions + (
+          (contexts && contexts.length > 0 && options.contextMode) ? 
+          ("\n\n Previous sentence(s) (Context): " + contexts.join()) : ""
+        )
+      }),
+      input: texts[0],
+      speed: 1.0,
+    }),
+  });
   await validate200(headers);
   const bf = await headers.arrayBuffer();
-  return bf;
+  return [bf];
 };
 
 function orDefaultOpenAI(maybeUrl: string): string {
   return maybeUrl.replace(/\/$/, "") || REAL_OPENAI_API_URL;
 }
 
-export async function listModels(
+function orDefaultHume(maybeUrl: string): string {
+  return maybeUrl.replace(/\/$/, "") || REAL_HUME_API_URL;
+}
+
+export async function listOpenAIModels(
   settings: TTSPluginSettings,
 ): Promise<string[]> {
   const headers = await fetch(
-    orDefaultOpenAI(settings.OPENAI_API_URL) + "/v1/models",
+    orDefaultOpenAI(settings.API_URL) + "/v1/models",
     {
       method: "GET",
       headers: {
-        Authorization: "Bearer " + settings.OPENAI_API_KEY,
+        Authorization: "Bearer " + settings.API_KEY,
         "Content-Type": "application/json",
       },
     },
@@ -124,12 +229,13 @@ async function validate200(response: Response) {
   }
 }
 
-export class OpenAIAPIError extends Error {
-  name = "OpenAIAPIError";
+export class APIError extends Error {
+  name = "APIError";
   status: number;
   json?: unknown;
+
   constructor(status: number, json?: unknown) {
-    super(`OpenAI API error (${status}) - ${JSON.stringify(json)})`);
+    super(`API error (${status}) - ${JSON.stringify(json)})`);
     this.status = status;
     this.json = json;
   }

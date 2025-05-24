@@ -7,6 +7,7 @@ import {
   ModelProvider,
   PlayerViewMode,
   REAL_OPENAI_API_URL,
+  MARKETING_NAME,
   TTSPluginSettingsStore,
   isPlayerViewMode,
   modelProviders,
@@ -62,7 +63,7 @@ const TTSSettingsTabComponent: React.FC<{
   const [isActive, setActive] = React.useState(false);
   return (
     <>
-      <h1>OpenAI</h1>
+      <h1>{MARKETING_NAME}</h1>
       <ErrorInfoView player={player} />
       <TestVoiceComponent
         store={store}
@@ -71,16 +72,27 @@ const TTSSettingsTabComponent: React.FC<{
         setActive={setActive}
       />
       <ModelSwitcher store={store} />
-
-      {store.settings.modelProvider === "openai" ? (
+      {store.settings.modelProvider === "openai" && (
         <>
+        <h1>OpenAI</h1>
           <OpenAIApiKeyComponent store={store} />
           <OpenAIModelComponent store={store} />
           <OpenAIVoiceComponent store={store} />
           <OpenAITTSInstructionsComponent store={store} />
         </>
-      ) : (
+      )}
+
+      {store.settings.modelProvider === "hume" &&(
         <>
+          <h1>Hume</h1>
+          <HumeModelComponent store={store} />
+          <HumeProviderComponent store={store} />
+          <HumeVoiceComponent store={store} />
+          <HumeTTSInstructionsComponent store={store} />
+        </>)}
+      {store.settings.modelProvider === "openaicompat" && (
+        <>
+          <h1>OpenAI Compatible API</h1>
           <OpenAICompatibleApiKeyComponent store={store} />
           <APIBaseURLComponent store={store} />
           <CustomVoices store={store} />
@@ -121,6 +133,7 @@ const ErrorInfoView: React.FC<{
 const labels: Record<ModelProvider, string> = {
   openai: "OpenAI",
   openaicompat: "OpenAI Compatible (Advanced)",
+  hume: "Hume",
 };
 
 const ModelSwitcher: React.FC<{
@@ -138,9 +151,7 @@ const ModelSwitcher: React.FC<{
         <OptionSelect
           options={modelProviders.map((v) => ({ label: labels[v], value: v }))}
           value={store.settings.modelProvider}
-          onChange={(v) =>
-            store.updateSettings({ modelProvider: v as ModelProvider })
-          }
+          onChange={(v) => store.updateModelSpecificSettings(v as ModelProvider, {})}
         />
       </div>
     </div>
@@ -387,6 +398,7 @@ const AudioFolderComponent: React.FC<{
 const APIBaseURLComponent: React.FC<{
   store: TTSPluginSettingsStore;
 }> = observer(({ store }) => {
+
   function isValidURL(url: string) {
     if (!url) {
       return true;
@@ -399,8 +411,8 @@ const APIBaseURLComponent: React.FC<{
     }
   }
   const [state, setState] = React.useState({
-    raw: store.settings.OPENAI_API_URL,
-    valid: isValidURL(store.settings.OPENAI_API_URL),
+    raw: store.settings.API_URL,
+    valid: isValidURL(store.settings.API_URL),
   });
   const onChange: React.ChangeEventHandler<HTMLInputElement> =
     React.useCallback((v: React.ChangeEvent<HTMLInputElement>) => {
@@ -411,7 +423,7 @@ const APIBaseURLComponent: React.FC<{
         valid,
       });
       if (valid) {
-        store.updateSettings({ OPENAI_API_URL: url });
+        store.updateSettings({ API_URL: url });
       }
     }, []);
   return (
@@ -532,6 +544,72 @@ const OpenAIApiKeyComponent: React.FC<{
   );
 });
 
+const HumeProviderComponent: React.FC<{ store: TTSPluginSettingsStore }> = observer(({ store }) => {
+  const providerOptions = [
+    { label: "Hume", value: "HUME_AI" },
+    { label: "Custom Voice", value: "CUSTOM_VOICE" },
+  ];
+  const onChange = React.useCallback(
+    (v: string) => {
+      store.updateModelSpecificSettings("hume", {
+        hume_sourceType: v,
+      });
+    },
+    [store],
+  );
+  return (
+    <div className="setting-item">
+      <div className="setting-item-info">
+        <div className="setting-item-name">Provider</div>
+        <div className="setting-item-description">
+          Choose between Hume's preset voices or your own custom voices.
+        </div>
+      </div>
+      <div className="setting-item-control">
+        <OptionSelect
+          options={providerOptions}
+          value={store.settings.hume_sourceType}
+          onChange={onChange}
+        />
+      </div>
+    </div>
+  );
+});
+const HumeApiKeyComponent: React.FC<{
+  store: TTSPluginSettingsStore;
+}> = observer(({ store }) => {
+  const [showPassword, setShowPassword] = React.useState(false);
+  const onChange: React.ChangeEventHandler<HTMLInputElement> =
+    React.useCallback((v: React.ChangeEvent<HTMLInputElement>) => {
+      store.updateModelSpecificSettings("hume", {
+        hume_apiKey: v.target.value,
+      });
+    }, []);
+  return (
+    <div className="setting-item">
+      <div className="setting-item-info">
+        <div className="setting-item-name">Hume API key</div>
+        <div className="setting-item-description">
+          Your Hume API key. You can get one{" "}
+          <a href="https://platform.hume.ai/settings/keys" target="_blank">
+            here
+          </a>
+          .
+        </div>
+      </div>
+      <div className="setting-item-control">
+        <input
+          type={showPassword ? "text" : "password"}
+          placeholder="API Key"
+          value={store.settings.hume_apiKey}
+          onChange={onChange}
+        />
+        <IconButton icon={showPassword ? "eye-off" : "eye"} onClick={() => setShowPassword(!showPassword)} />
+      </div>
+    </div>
+  );
+});
+
 const OpenAICompatibleApiKeyComponent: React.FC<{
   store: TTSPluginSettingsStore;
 }> = observer(({ store }) => {
@@ -568,11 +646,7 @@ const OpenAICompatibleApiKeyComponent: React.FC<{
 const DEFAULT_MODELS: Model[] = [
   { label: "tts-1", value: "tts-1" },
   { label: "tts-1-hd", value: "tts-1-hd" },
-  {
-    label: "gpt-4o-mini-tts",
-    value: "gpt-4o-mini-tts",
-    supportsInstructions: true,
-  },
+  { label: "gpt-4o-mini-tts", value: "gpt-4o-mini-tts", supportsInstructions: true },
 ] as const;
 
 interface Model {
@@ -701,6 +775,29 @@ const OpenAIVoiceComponent: React.FC<{
   );
 });
 
+const HumeModelComponent: React.FC<{ store: TTSPluginSettingsStore }> = observer(({ store }) => {
+  const [showPassword, setShowPassword] = React.useState(false);
+  const onChange: React.ChangeEventHandler<HTMLInputElement> = React.useCallback((v: React.ChangeEvent<HTMLInputElement>) => {
+    store.updateModelSpecificSettings("hume", {
+      hume_apiKey: v.target.value,
+    });
+  }, []);
+  return (<div className="setting-item">
+    <div className="setting-item-info">
+      <div className="setting-item-name">Hume API key</div>
+      <div className="setting-item-description">Your Hume API key. You can get one <a href="https://platform.hume.ai/settings/keys" target="_blank"> here </a>. </div>
+    </div>
+    <div className="setting-item-control">
+      <input type={showPassword ? "text" : "password"} placeholder="API Key" value={store.settings.hume_apiKey} onChange={onChange} />
+      <IconButton icon={showPassword ? "eye-off" : "eye"} onClick={() => setShowPassword(!showPassword)} />
+    </div>
+  </div>);
+});
+const HumeVoiceComponent: React.FC<{
+  store: TTSPluginSettingsStore;
+}> = observer(({ store }) => {
+  return (<div className="setting-item"> <div className="setting-item-info"> <div className="setting-item-name">Hume Voice ID</div> <div className="setting-item-description">The Hume Voice ID to use</div> </div> <input type="text" value={store.settings.hume_ttsVoice} onChange={(v) => store.updateModelSpecificSettings("hume", {hume_ttsVoice: v.target.value})} /> </div>);
+});
 const TestVoiceComponent: React.FC<{
   store: TTSPluginSettingsStore;
   player: AudioStore;
@@ -711,13 +808,23 @@ const TestVoiceComponent: React.FC<{
   const isLoading = player.activeText?.isLoading;
   const playSample = React.useCallback(() => {
     if (!isPlaying) {
-      const text = `Hi, I'm ${store.settings.ttsVoice}. I'm a virtual text to speech assistant.`;
-      player.startPlayer({
-        text,
-        filename: "sample " + store.settings.ttsVoice,
-        start: 0,
-        end: text.length,
-      });
+      if (store.settings.modelProvider === "hume") {
+        const text = `Hi, I'm Hume AI. I'm a virtual text to speech assistant.`;
+        player.startPlayer({
+          text,
+          filename: "sample " + store.settings.ttsVoice,
+          start: 0,
+          end: text.length,
+        });
+      } else {
+        const text = `Hi, I'm ${store.settings.ttsVoice}. I'm a virtual text to speech assistant.`;
+        player.startPlayer({
+          text,
+          filename: "sample " + store.settings.ttsVoice,
+          start: 0,
+          end: text.length,
+        });
+      }
       if (!isActive) {
         setActive(true);
       }
@@ -804,6 +911,39 @@ const OpenAITTSInstructionsComponent: React.FC<{
         <div className="setting-item-description">
           Optional instructions to customize the tone and style of the voice
           (only supported by some models)
+        </div>
+      </div>
+      <textarea
+        value={instructions}
+        disabled={disabled}
+        onChange={onChange}
+        placeholder="Example: Speak in a whisper"
+        rows={3}
+        className="tts-instructions-textarea"
+      />
+    </div>
+  );
+});
+
+const HumeTTSInstructionsComponent: React.FC<{
+  store: TTSPluginSettingsStore;
+}> = observer(({ store }) => {
+  const onChange: React.ChangeEventHandler<HTMLTextAreaElement> =
+    React.useCallback((evt) => {
+      store.updateModelSpecificSettings("hume", {
+        hume_ttsInstructions: evt.target.value,
+      });
+    }, []);
+
+  const disabled = false;
+  const instructions = store.settings.hume_ttsInstructions;
+
+  return (
+    <div className="setting-item tts-settings-block">
+      <div className="setting-item-info">
+        <div className="setting-item-name">Voice Instructions</div>
+        <div className="setting-item-description">
+          Optional instructions to customize the tone and style of the voice
         </div>
       </div>
       <textarea
