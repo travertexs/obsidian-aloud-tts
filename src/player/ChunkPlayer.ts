@@ -431,7 +431,7 @@ const loadCheck = async (
   chunk.setLoading();
   let audio: ArrayBuffer;
   try {
-    audio = await chunkLoader.load(text, modelOpts);
+    audio = (await chunkLoader.load([text], modelOpts))[0];
   } catch (e) {
     chunk.setFailed(e);
     throw e;

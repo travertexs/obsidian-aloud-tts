@@ -63,7 +63,7 @@ const TTSSettingsTabComponent: React.FC<{
   const [isActive, setActive] = React.useState(false);
   return (
     <>
-      <h1>${MARKETING_NAME}</h1>
+      <h1>{MARKETING_NAME}</h1>
       <ErrorInfoView player={player} />
       <TestVoiceComponent
         store={store}

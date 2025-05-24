@@ -7,9 +7,7 @@ import {
   TTSPluginSettingsStore,
 } from "../player/TTSPluginSettings";
 import { IndexedDBAudioStorage } from "./IndexedDBAudioStorage";
-// Import humeBatchTextToSpeech along with existing imports
 import {
-  humeBatchTextToSpeech,
   humeTextToSpeech,
   openAITextToSpeech,
 } from "../player/TTSModel";
@@ -21,7 +19,6 @@ import { AudioVisualizer } from "../components/AudioVisualizer";
 import { useEffect, useState, type FC, useCallback, useRef } from "react";
 import { observer } from "mobx-react-lite";
 import { createAudioSystem } from "../player/AudioSystem";
-// Import ChunkLoader
 import { ChunkLoader } from "../player/ChunkLoader";
 
 
@@ -46,8 +43,11 @@ async function main() {
 
   const system = createAudioSystem({
     settings: () => settingsStore.settings,
-    ttsModel: () => openAITextToSpeech,
-    humeBatchTTSModel: () => humeBatchTextToSpeech,
+    ttsModel: () => (
+      system.settings.modelProvider === "hume" ? 
+        humeTextToSpeech :
+        openAITextToSpeech
+    ),
     storage: () => new IndexedDBAudioStorage(),
     audioSink: () => audioSink,
     audioStore: (sys) => loadAudioStore({ system: sys }),
@@ -259,26 +259,27 @@ const SimplePlayer: FC<{ settingsStore: TTSPluginSettingsStore }> = observer(
       WebAudioSink.create().then(async (sink) => {
         const text = `Speaking of connections, I think that's another important aspect of embracing uncertainty. When we're open to new experiences and perspectives, we're more likely to form meaningful connections with others. We're more likely to listen, to learn, and to grow together.`;
         if (settingsStore.settings.modelProvider === "hume") {
-          const audio = await humeTextToSpeech(text, {
+          const audio = await humeTextToSpeech([text], {
             model: "",
-            voice: "",
             sourceType: "HUME_AI",
-            apiKey: settingsStore.settings.hume_apiKey,
+            contextMode: false,
             apiUri: REAL_HUME_API_URL,
+            apiKey: settingsStore.settings.hume_apiKey,
           });
         
-          await sink.switchMedia(audio);
+          await sink.switchMedia(audio[0]);
           setSink(sink);
         } else {
-          const audio = await openAITextToSpeech(text, {
+          const audio = await openAITextToSpeech([text], {
             model: "tts-1",
             voice: "shimmer",
-            sourceType: "HUME_AI",
-            apiKey: settingsStore.settings.openai_apiKey,
+            sourceType: "",
+            contextMode: false,
             apiUri: REAL_OPENAI_API_URL,
+            apiKey: settingsStore.settings.openai_apiKey,
           });
         
-          await sink.switchMedia(audio);
+          await sink.switchMedia(audio[0]);
           setSink(sink);
         }
       });

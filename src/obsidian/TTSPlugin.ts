@@ -14,7 +14,7 @@ import {
 } from "../player/TTSPluginSettings";
 import { ObsidianBridge, ObsidianBridgeImpl } from "./ObsidianBridge";
 import { configurableAudioCache } from "./ObsidianPlayer";
-import { openAITextToSpeech, humeTextToSpeech, humeBatchTextToSpeech } from "../player/TTSModel";
+import { openAITextToSpeech, humeTextToSpeech } from "../player/TTSModel";
 
 // standard lucide.dev icon, but for some reason not working as a ribbon icon without registering it
 // https://lucide.dev/icons/audio-lines
@@ -185,11 +185,6 @@ export default class TTSPlugin extends Plugin {
         system.settings.modelProvider === "hume" ?
           humeTextToSpeech :
           openAITextToSpeech
-      ),
-      humeBatchTTSModel: (system) => (
-        system.settings.modelProvider === "hume" ?
-          humeBatchTextToSpeech :
-          undefined
       ),
       chunkLoader: (system) => new ChunkLoader({ system }),
       config: () => ({

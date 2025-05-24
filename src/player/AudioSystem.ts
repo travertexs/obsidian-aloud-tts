@@ -1,10 +1,9 @@
 import { AudioCache } from "./AudioCache";
-import { AudioSink, WebAudioSink } from "./AudioSink";
-import { AudioStore, loadAudioStore } from "./AudioStore";
-import { TTSModel, BatchTTSModel, humeTextToSpeech, humeBatchTextToSpeech, openAITextToSpeech } from "./TTSModel";
+import { AudioSink } from "./AudioSink";
+import { AudioStore } from "./AudioStore";
+import { TTSModel } from "./TTSModel";
 import { TTSPluginSettings, DEFAULT_SETTINGS } from "./TTSPluginSettings";
 import { ChunkLoader } from "./ChunkLoader";
-import { configurableAudioCache } from "../obsidian/ObsidianPlayer";
 
 // Configuration options for the AudioSystem
 export interface AudioSystemConfig {
@@ -17,8 +16,7 @@ export interface AudioSystem {
   readonly settings: TTSPluginSettings;
   readonly storage: AudioCache;
   readonly chunkLoader: ChunkLoader;
-  readonly ttsModel: TTSModel | undefined;
-  readonly humeBatchTTSModel: BatchTTSModel | undefined;
+  readonly ttsModel: TTSModel;
   readonly config: AudioSystemConfig;
 }
 
@@ -46,41 +44,7 @@ export function createAudioSystem(
         }
         return partial[prop];
       },
-      set() {
-         // Prevent modification after initial lazy creation
-         throw new Error("AudioSystem properties are read-only after creation.");
-      }
     },
   );
   return proxy as AudioSystem;
-}
-
-// --- Default AudioSystem Factory ---
-
-export async function defaultAudioSystem(pluginSettings: TTSPluginSettings): Promise<AudioSystem> {
-    const settings = pluginSettings || DEFAULT_SETTINGS;
-
-    const audio = await WebAudioSink.create();
-
-    return createAudioSystem({
-        settings: () => settings,
-        config: () => ({
-            backgroundLoaderIntervalMillis: 500, // Example value, could be configurable
-        }),
-        ttsModel: (system) => (
-          system.settings.modelProvider === "hume" ?
-            humeTextToSpeech :
-            openAITextToSpeech
-        ),
-        humeBatchTTSModel: (system) => (
-          system.settings.modelProvider === "hume" ?
-            humeBatchTextToSpeech :
-            undefined
-        ),
-
-        storage: () => configurableAudioCache(this.app, this.settings),
-        chunkLoader: (system) => new ChunkLoader({ system }),
-        audioSink: () => audio,
-        audioStore: (system) => loadAudioStore({ system }),
-    });
 }

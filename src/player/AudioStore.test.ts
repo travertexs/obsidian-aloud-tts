@@ -3,7 +3,7 @@ import { describe, expect, test, vi, beforeEach, afterEach } from "vitest";
 import { AudioCache, memoryStorage } from "./AudioCache";
 import { AudioSink, TrackStatus } from "./AudioSink";
 import { AudioStore, loadAudioStore } from "./AudioStore";
-import { BatchTTSModel, TTSModel, TTSModelOptions } from "./TTSModel";
+import { TTSModel, TTSModelOptions } from "./TTSModel";
 import { DEFAULT_SETTINGS, TTSPluginSettings } from "./TTSPluginSettings";
 import { ActiveAudioText } from "./ActiveAudioText";
 import { createAudioSystem } from "./AudioSystem";
@@ -99,10 +99,10 @@ describe("AudioStore", () => {
           } as AudioBuffer);
         },
       });
-      const loaded: string[] = [];
-      const tts = (txt: string, _: TTSModelOptions) => {
-        loaded.push(txt);
-        return Promise.resolve(new ArrayBuffer(txt.length));
+      const loaded: string[][] = [];
+      const tts = async (txts: string[], _: TTSModelOptions) => {
+        loaded.push(txts);
+        return txts.map((t) => new ArrayBuffer(t.length));
       };
       const text =
         "First there was one bottle top. Then there were two bottle tops. Penultimately there were three bottle tops. Finally there were four bottle tops.";
@@ -117,18 +117,18 @@ describe("AudioStore", () => {
       active.play();
       await vi.advanceTimersByTimeAsync(1);
       expect(loaded).toEqual([
-        "First there was one bottle top. ",
-        "Then there were two bottle tops. ",
-        "Penultimately there were three bottle tops. ",
+        ["First there was one bottle top. "],
+        ["Then there were two bottle tops. "],
+        ["Penultimately there were three bottle tops. "],
       ]);
       sink.currentTime = duration;
       await vi.advanceTimersByTimeAsync(duration * 1000);
       expect(active.position).toEqual(1);
       expect(loaded).toEqual([
-        "First there was one bottle top. ",
-        "Then there were two bottle tops. ",
-        "Penultimately there were three bottle tops. ",
-        "Finally there were four bottle tops.",
+        ["First there was one bottle top. "],
+        ["Then there were two bottle tops. "],
+        ["Penultimately there were three bottle tops. "],
+        ["Finally there were four bottle tops."],
       ]);
       expect(active.isPlaying).toEqual(true);
       sink.currentTime = duration * 2;
@@ -145,10 +145,10 @@ describe("AudioStore", () => {
     });
 
     test("should switch out the queue when the settings change", async () => {
-      const seen: { text: string; settings: TTSModelOptions }[] = [];
-      const tts: TTSModel = (text: string, settings: TTSModelOptions) => {
-        seen.push({ text, settings });
-        return fakeTTS(text, settings);
+      const seen: { text: string[]; settings: TTSModelOptions }[] = [];
+      const tts: TTSModel = (texts: string[], settings: TTSModelOptions) => {
+        seen.push({ text: texts, settings });
+        return fakeTTS(texts, settings);
       };
       const settings = mobx.observable({ ...DEFAULT_SETTINGS });
       const text =
@@ -229,10 +229,10 @@ describe("AudioStore", () => {
     test("should reset audio after current track finishes when text in next track is edited", async () => {
       vi.useFakeTimers();
       const duration = 5;
-      const ttsCalls: string[] = [];
-      const tts = async (txt: string, _: TTSModelOptions) => {
+      const ttsCalls: string[][] = [];
+      const tts = async (txt: string[], _: TTSModelOptions) => {
         ttsCalls.push(txt);
-        return new ArrayBuffer(txt.length);
+        return txt.map((t) => new ArrayBuffer(t.length));
       };
       const sink = new FakeAudioSink({
         getAudioBuffer: async () => ({ duration }) as AudioBuffer,
@@ -267,7 +267,7 @@ describe("AudioStore", () => {
       expect(aat.audio.chunks[2].rawText).toContain("New ");
 
       expect(ttsCalls).toHaveLength(4);
-      expect(ttsCalls[3]).toMatch(/^New /);
+      expect(ttsCalls[3][0]).toMatch(/^New /);
     });
 
     test("should update the tracks' positions forward when the text is added before", async () => {
@@ -658,11 +658,7 @@ describe("AudioStore", () => {
 });
 
 const fakeTTS: TTSModel = async () => {
-  return new ArrayBuffer(0);
-};
-
-const fakeTTSBatch: BatchTTSModel = async () => {
-  return [];
+  return [new ArrayBuffer(0)];
 };
 
 const emptyAudioBuffer = {
@@ -763,7 +759,6 @@ function FakeHTMLAudioElement() {
 
 interface MaybeStoreDependencies {
   textToSpeech?: TTSModel;
-  textToSpeechBatch?: BatchTTSModel;
   storage?: AudioCache;
   audioSink?: AudioSink;
   ttsSettings?: TTSPluginSettings;
@@ -772,7 +767,6 @@ function createStore({
   storage = memoryStorage(),
   audioSink = new FakeAudioSink(),
   textToSpeech = fakeTTS,
-  textToSpeechBatch = fakeTTSBatch,
   ttsSettings = DEFAULT_SETTINGS,
 }: MaybeStoreDependencies = {}): AudioStore {
   const system = createAudioSystem({
@@ -789,7 +783,6 @@ function createStore({
       });
     },
     chunkLoader: (sys) => (new ChunkLoader({ system: sys })),
-    humeBatchTTSModel: () => textToSpeechBatch,
   });
   return system.audioStore;
 }
