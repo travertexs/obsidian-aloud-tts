@@ -53,7 +53,6 @@ describe("pluginSettingsStore", () => {
       model: "test-model",
       ttsVoice: "test-voice",
       contextMode: false,
-      batchMode: "off" as TTSPluginSettings["batchMode"],
     };
     const loadData = async () => baseData;
     const saveData = async (data: unknown) => {};
@@ -68,7 +67,6 @@ describe("pluginSettingsStore", () => {
       openai_ttsModel: baseData.model,
       openai_ttsVoice: baseData.ttsVoice,
       openai_contextMode: baseData.contextMode,
-      openai_batchMode: "off",
       version: 1,
     };
 
@@ -81,7 +79,6 @@ describe("pluginSettingsStore", () => {
       model: "test-model",
       ttsVoice: "test-voice",
       contextMode: false,
-      batchMode: "off" as TTSPluginSettings["batchMode"],
     };
     const loadData = async () => baseData;
     const saveData = async (data: unknown) => {};
@@ -97,7 +94,6 @@ describe("pluginSettingsStore", () => {
       openaicompat_ttsModel: baseData.model,
       openaicompat_ttsVoice: baseData.ttsVoice,
       contextMode: baseData.contextMode,
-      openaicompat_batchMode: "off",
       version: 1,
     };
 
@@ -110,7 +106,6 @@ describe("pluginSettingsStore", () => {
       ttsVoice: "test-voice",
       sourceType: "TEST_SOURCE",
       contextMode: false,
-      batchMode: "off" as TTSPluginSettings["batchMode"],
     };
     const loadData = async () => baseData;
     const saveData = async (data: unknown) => {};
@@ -125,7 +120,6 @@ describe("pluginSettingsStore", () => {
       hume_ttsVoice: baseData.ttsVoice,
       hume_sourceType: baseData.sourceType,
       hume_contextMode: baseData.contextMode,
-      hume_batchMode: baseData.batchMode,
       version: 1,
     };
 
@@ -141,7 +135,6 @@ describe("pluginSettingsStore", () => {
       openaicompat_ttsModel: "test-model",
       openaicompat_ttsVoice: "test-voice",
       openaicompat_contextMode: false,
-      openaicompat_batchMode: "off",
     });
     const saveData = async (data: unknown) => {};
 
@@ -152,13 +145,11 @@ describe("pluginSettingsStore", () => {
       openai_ttsModel: "new-test-model",
       openai_ttsVoice: "new-test-voice",
       openai_contextMode: false,
-      openai_batchMode: "off",
     });
     expect(store.settings.API_KEY).toEqual("new-test-key");
     expect(store.settings.model).toEqual("new-test-model");
     expect(store.settings.ttsVoice).toEqual("new-test-voice");
     expect(store.settings.contextMode).toEqual(false);
-    expect(store.settings.batchMode).toEqual("off");
   });
   it("should apply openai related settings to the default scope when original model provider was hume", async () => {
     const loadData = async () => ({
@@ -168,7 +159,6 @@ describe("pluginSettingsStore", () => {
       hume_ttsVoice: "test-voice",
       hume_sourceType: "TEST_SOURCE",
       hume_contextMode: false,
-      hume_batchMode: "off",
     });
     const saveData = async (data: unknown) => {};
 
@@ -179,13 +169,11 @@ describe("pluginSettingsStore", () => {
       openai_ttsModel: "new-test-model",
       openai_ttsVoice: "new-test-voice",
       openai_contextMode: false,
-      openai_batchMode: "off",
     });
     expect(store.settings.API_KEY).toEqual("new-test-key");
     expect(store.settings.model).toEqual("new-test-model");
     expect(store.settings.ttsVoice).toEqual("new-test-voice");
     expect(store.settings.contextMode).toEqual(false);
-    expect(store.settings.batchMode).toEqual("off");
   });
   it("should apply openaicompat related settings to the default scope when original model provider was openai", async () => {
     const loadData = async () => ({
@@ -195,7 +183,6 @@ describe("pluginSettingsStore", () => {
       openai_ttsModel: "test-model",
       openai_ttsVoice: "test-voice",
       openai_contextMode: false,
-      openai_batchMode: "off",
     });
     const saveData = async (data: unknown) => {};
 
@@ -207,14 +194,12 @@ describe("pluginSettingsStore", () => {
       openaicompat_ttsModel: "new-test-model",
       openaicompat_ttsVoice: "new-test-voice",
       openaicompat_contextMode: false,
-      openaicompat_batchMode: "off",
     });
     expect(store.settings.API_KEY).toEqual("new-test-key");
     expect(store.settings.API_URL).toEqual("https://api.example.com");
     expect(store.settings.model).toEqual("new-test-model");
     expect(store.settings.ttsVoice).toEqual("new-test-voice");
     expect(store.settings.contextMode).toEqual(false);
-    expect(store.settings.batchMode).toEqual("off");
   });
   it("should apply openaicompat related settings to the default scope when original model provider was hume", async () => {
     const loadData = async () => ({
@@ -224,7 +209,6 @@ describe("pluginSettingsStore", () => {
       hume_ttsVoice: "test-voice",
       hume_sourceType: "TEST_SOURCE",
       hume_contextMode: false,
-      hume_batchMode: "off",
     });
     const saveData = async (data: unknown) => {};
 
@@ -236,14 +220,12 @@ describe("pluginSettingsStore", () => {
       openaicompat_ttsModel: "new-test-model",
       openaicompat_ttsVoice: "new-test-voice",
       openaicompat_contextMode: false,
-      openaicompat_batchMode: "off",
     });
     expect(store.settings.API_KEY).toEqual("new-test-key");
     expect(store.settings.API_URL).toEqual("https://api.example.com");
     expect(store.settings.model).toEqual("new-test-model");
     expect(store.settings.ttsVoice).toEqual("new-test-voice");
     expect(store.settings.contextMode).toEqual(false);
-    expect(store.settings.batchMode).toEqual("off");
   });
   it("should apply hume related settings to the default scope when original model provider was openai", async () => {
     const loadData = async () => ({
@@ -253,7 +235,6 @@ describe("pluginSettingsStore", () => {
       openai_ttsModel: "test-model",
       openai_ttsVoice: "test-voice",
       openai_contextMode: false,
-      openai_batchMode: "off",
     });
     const saveData = async (data: unknown) => {};
 
@@ -264,13 +245,11 @@ describe("pluginSettingsStore", () => {
       hume_ttsVoice: "new-test-voice",
       hume_sourceType: "NEW_TEST_SOURCE",
       hume_contextMode: false,
-      hume_batchMode: "off",
     });
     expect(store.settings.API_KEY).toEqual("new-test-key");
     expect(store.settings.ttsVoice).toEqual("new-test-voice");
     expect(store.settings.sourceType).toEqual("NEW_TEST_SOURCE");
     expect(store.settings.contextMode).toEqual(false);
-    expect(store.settings.batchMode).toEqual("off");
   });
   it("should apply hume related settings to the default scope when original model provider was openaicompat", async () => {
     const loadData = async () => ({
@@ -281,7 +260,6 @@ describe("pluginSettingsStore", () => {
       openaicompat_ttsModel: "test-model",
       openaicompat_ttsVoice: "test-voice",
       openaicompat_contextMode: false,
-      openaicompat_batchMode: "off",
     });
     const saveData = async (data: unknown) => {};
 
@@ -292,13 +270,11 @@ describe("pluginSettingsStore", () => {
       hume_ttsVoice: "new-test-voice",
       hume_sourceType: "NEW_TEST_SOURCE",
       hume_contextMode: false,
-      hume_batchMode: "off",
     });
     expect(store.settings.API_KEY).toEqual("new-test-key");
     expect(store.settings.ttsVoice).toEqual("new-test-voice");
     expect(store.settings.sourceType).toEqual("NEW_TEST_SOURCE");
     expect(store.settings.contextMode).toEqual(false);
-    expect(store.settings.batchMode).toEqual("off");
   });
 
   it("should save data when updateSettings is called", async () => {

@@ -71,16 +71,15 @@ export function toModelOptions(
 
 // Interface for batch text-to-speech requests
 export interface TTSModel {
-  (texts: string[], options: TTSModelOptions, contexts?: string[]): Promise<ArrayBuffer[]>;
+  (text: string, options: TTSModelOptions, contexts?: string[]): Promise<ArrayBuffer>;
 }
 
 export const humeTextToSpeech: TTSModel = async function humeTextToSpeech(
-  texts: string[],
+  text: string,
   options: TTSModelOptions,
   contexts?: string[],
-): Promise<ArrayBuffer[]> {
+): Promise<ArrayBuffer> {
   // Construct the utterances array for the Hume API request
-  const utterances = texts.map((text, index) => {
     const utterance: {
       text: string;
       voice?: { id: string; provider: string };
@@ -88,23 +87,13 @@ export const humeTextToSpeech: TTSModel = async function humeTextToSpeech(
       speed?: number;
     } = {
       text: text,
+      voice: options.voice ? {
+        id: options.voice,
+        provider: options.sourceType.toUpperCase(),
+      } : undefined,
+      description: options.instructions,
+      speed: 1.0,
     };
-
-    // Only include voice, description and speed for the first utterance for continuation
-    if (index === 0) {
-      if (options.voice) {
-        utterance.voice = {
-          id: options.voice,
-          provider: options.sourceType.toUpperCase(),
-        };
-      }
-      if (options.instructions) {
-        utterance.description = options.instructions;
-      }
-      utterance.speed = 1.0;
-    }
-    return utterance;
-  });
 
   let contextUtterances: { text: string }[] | undefined;
   if (contexts) {
@@ -125,7 +114,7 @@ export const humeTextToSpeech: TTSModel = async function humeTextToSpeech(
       ...(contexts && contexts.length > 0 && options.contextMode && {
         context: { utterances: contextUtterances }
       }),
-      utterances: utterances,
+      utterances: utterance,
       format: { type: "mp3" },
       num_generations: 1,
       split_utterances: false,
@@ -140,29 +129,17 @@ export const humeTextToSpeech: TTSModel = async function humeTextToSpeech(
     console.error("Hume response missing generations or snippets:", res);
     throw new Error("Hume response missing generations or snippets");
   }
-
-    if (generation.snippets.length !== texts.length) {
-      throw new Error(
-        `Mismatch between input texts (${texts.length}) and received snippets (${generation.snippets.length})`,
-      );
-    }
-    
-    const audioBuffers: ArrayBuffer[] = [];
-    for (let i = 0; i < texts.length; i++) {
-      const snippets = generation.snippets[i];
-      const snippet = snippets[0];
-      audioBuffers.push(base64ToArrayBuffer(snippet.audio));
-    }
-
-    return audioBuffers;
+  
+  const snippet = generation.snippets[0];
+  return base64ToArrayBuffer(snippet.audio);
 };
 
 // OpenAI / Compatible API implementation
 export const openAITextToSpeech: TTSModel = async function openAITextToSpeech(
-  texts: string[],
+  text: string,
   options: TTSModelOptions,
   contexts?: string[],
-): Promise<ArrayBuffer[]> {
+): Promise<ArrayBuffer> {
   const headers = await fetch(orDefaultOpenAI(options.apiUri) + "/v1/audio/speech", {
     headers: {
       Authorization: "Bearer " + options.apiKey,
@@ -175,16 +152,16 @@ export const openAITextToSpeech: TTSModel = async function openAITextToSpeech(
       ...(options.instructions && {
         instructions: options.instructions + (
           (contexts && contexts.length > 0 && options.contextMode) ? 
-          ("\n\n Previous sentence(s) (Context): " + contexts.join()) : ""
+          ("\n\n Previous sentence(s) (Context): " + contexts.join("")) : ""
         )
       }),
-      input: texts[0],
+      input: text,
       speed: 1.0,
     }),
   });
   await validate200(headers);
   const bf = await headers.arrayBuffer();
-  return [bf];
+  return bf;
 };
 
 function orDefaultOpenAI(maybeUrl: string): string {

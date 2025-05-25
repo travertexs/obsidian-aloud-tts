@@ -65,7 +65,7 @@ class AudioStoreImpl implements AudioStore {
   }
 
   async exportAudio(text: string): Promise<ArrayBuffer> {
-    return (await this.system.ttsModel([text], toModelOptions(this.system.settings)))[0];
+    return await this.system.ttsModel(text, toModelOptions(this.system.settings));
   }
 
   _backgroundProcesses: { shutdown: () => void }[] = [];

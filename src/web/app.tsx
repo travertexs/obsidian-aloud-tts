@@ -259,7 +259,7 @@ const SimplePlayer: FC<{ settingsStore: TTSPluginSettingsStore }> = observer(
       WebAudioSink.create().then(async (sink) => {
         const text = `Speaking of connections, I think that's another important aspect of embracing uncertainty. When we're open to new experiences and perspectives, we're more likely to form meaningful connections with others. We're more likely to listen, to learn, and to grow together.`;
         if (settingsStore.settings.modelProvider === "hume") {
-          const audio = await humeTextToSpeech([text], {
+          const audio = await humeTextToSpeech(text, {
             model: "",
             sourceType: "HUME_AI",
             contextMode: false,
@@ -267,10 +267,10 @@ const SimplePlayer: FC<{ settingsStore: TTSPluginSettingsStore }> = observer(
             apiKey: settingsStore.settings.hume_apiKey,
           });
         
-          await sink.switchMedia(audio[0]);
+          await sink.switchMedia(audio);
           setSink(sink);
         } else {
-          const audio = await openAITextToSpeech([text], {
+          const audio = await openAITextToSpeech(text, {
             model: "tts-1",
             voice: "shimmer",
             sourceType: "",
@@ -279,7 +279,7 @@ const SimplePlayer: FC<{ settingsStore: TTSPluginSettingsStore }> = observer(
             apiKey: settingsStore.settings.openai_apiKey,
           });
         
-          await sink.switchMedia(audio[0]);
+          await sink.switchMedia(audio);
           setSink(sink);
         }
       });

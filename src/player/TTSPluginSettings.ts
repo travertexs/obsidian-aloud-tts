@@ -11,7 +11,6 @@ export type TTSPluginSettings = {
   sourceType: string;
   instructions?: string;
   contextMode: boolean;
-  batchMode: "reload_uncached_only" | "reload_from_first_uncached" | "reload_all" | "off";
   chunkType: "sentence" | "paragraph";
   playbackSpeed: number;
   cacheType: "local" | "vault";
@@ -27,7 +26,6 @@ export interface OpenAIModelConfig {
   openai_ttsVoice: string;
   openai_ttsInstructions?: string;
   openai_contextMode: boolean;
-  openai_batchMode: "off";
 }
 
 export interface OpenAICompatModelConfig {
@@ -35,8 +33,7 @@ export interface OpenAICompatModelConfig {
   openaicompat_apiBase: string;
   openaicompat_ttsModel: string;
   openaicompat_ttsVoice: string;
-  openaicompat_contextMode: boolean;
-  openaicompat_batchMode: "off";
+  openaicompat_contextMode: false;
 }
 
 export interface HumeModelConfig {
@@ -45,7 +42,6 @@ export interface HumeModelConfig {
   hume_sourceType: string;
   hume_ttsInstructions?: string;
   hume_contextMode: boolean;
-  hume_batchMode: TTSPluginSettings["batchMode"];
 }
 
 export const playViewModes = [
@@ -68,7 +64,7 @@ export function voiceHash(options: TTSModelOptions): string {
 }
 
 export const REAL_OPENAI_API_URL = "https://api.openai.com";
-export const REAL_HUME_API_URL = "API_URL";
+export const REAL_HUME_API_URL = "https://api.hume.ai";
 
 export const modelProviders = ["openai", "openaicompat", "hume"] as const;
 export type ModelProvider = (typeof modelProviders)[number];
@@ -82,7 +78,6 @@ export const DEFAULT_SETTINGS: TTSPluginSettings = {
   sourceType: "",
   instructions: undefined,
   contextMode: false,
-  batchMode: "off",
   chunkType: "sentence",
   playbackSpeed: 1.0,
   cacheDurationMillis: 1000 * 60 * 60 * 24 * 7, // 7 days
@@ -94,21 +89,18 @@ export const DEFAULT_SETTINGS: TTSPluginSettings = {
   openai_ttsVoice: "shimmer",
   openai_ttsInstructions: undefined,
   openai_contextMode: false,
-  openai_batchMode: "off",
   // openaicompat
   openaicompat_apiKey: "",
   openaicompat_apiBase: "",
   openaicompat_ttsModel: "",
   openaicompat_ttsVoice: "",
   openaicompat_contextMode: false,
-  openaicompat_batchMode: "off",
   // hume
   hume_apiKey: "",
   hume_ttsVoice: undefined,
   hume_sourceType: "HUME_AI",
   hume_ttsInstructions: undefined,
   hume_contextMode: false,
-  hume_batchMode: "off",
 
   version: 1,
   audioFolder: "aloud",
@@ -212,7 +204,6 @@ export async function pluginSettingsStore(
               instructions: merged.openai_ttsInstructions || undefined,
               model: merged.openai_ttsModel,
               contextMode: merged.openai_contextMode,
-              batchMode: merged.openai_batchMode,
             }
             : provider === "openaicompat"
             ? {
@@ -222,7 +213,6 @@ export async function pluginSettingsStore(
               instructions: undefined,
               model: merged.openaicompat_ttsModel,
               contextMode: merged.openaicompat_contextMode,
-              batchMode: merged.openaicompat_batchMode,
             }
             : provider === "hume"
             ? {
@@ -232,7 +222,6 @@ export async function pluginSettingsStore(
               sourceType: merged.hume_sourceType,
               instructions: merged.hume_ttsInstructions || undefined,
               contextMode: merged.hume_contextMode,
-              hume_batchMode: merged.hume_batchMode,
             }
             : {};
         await store.updateSettings({
@@ -294,7 +283,6 @@ function migrateToVersion1(data: any): any {
       openaicompat_ttsModel: data.model,
       openaicompat_ttsVoice: data.ttsVoice,
       openaicompat_contextMode: data.contextMode,
-      openaicompat_batchMode: data.batchMode,
     };
   } else if (isHume) {
     modelProvider = "hume";
@@ -303,7 +291,6 @@ function migrateToVersion1(data: any): any {
       hume_ttsVoice: data.ttsVoice,
       hume_sourceType: data.sourceType,
       hume_contextMode: data.contextMode,
-      hume_batchMode: data.batchMode,
     };
   } else {
     modelProvider = "openai";
@@ -312,7 +299,6 @@ function migrateToVersion1(data: any): any {
       openai_ttsModel: data.model,
       openai_ttsVoice: data.ttsVoice,
       openai_contextMode: data.contextMode,
-      openai_batchMode: data.batchMode,
     };
   }
 
